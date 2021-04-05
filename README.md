@@ -1,7 +1,7 @@
 # infinipoll10k
 PV Logger for Infinisolar 10k hybrid and compatible inverters
 
-This php script (put it in /etc/infinipoll10/) logs values from Voltronics Infinisolar 10k and compatible hybrid pv inverters via a ETH-RS232 converter connected to the inverters serial port. It is mainly developed for displaying values in 123solar and meterN.
+This php script (put it in /etc/infinipoll10/) logs values from Voltronics Infinisolar 10k and compatible hybrid pv inverters via a USB-A to USB-B cable connected to the inverters serial port. It is mainly developed for displaying values in 123solar and meterN.
 Anyhow, all logged values are stored in textfiles named value.txt in directory set in variabe "$tmp_dir", eg. DCINV1.txt for PV string 1 dc input voltage.
 IP and TCP port of the ip-serial converter have to be set in parameter "$moxa_ip" and "$moxa_port". It has to be configures in "TCP-Server" mode.
 The script queries inverters type, serial number and firmware versions and stores it in variable $CMD_INFO.
@@ -11,3 +11,6 @@ The main loop querying values from pv, grid and battery will be redone after var
 Alarms get called every 100 loops and stored in file ALARM.txt, even at nighttime. Battery infos are updated during night time too and can be added as sensors in meterN to see live and historical values.
 
 Any improvement is very welcome.
+
+# Acknowledgement:
+https://github.com/riogrande75/infinipoll10k/

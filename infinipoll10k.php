@@ -1,9 +1,14 @@
 #!/usr/bin/php
 <?php
 
+
 //Allg. Einstellungen
-$moxa_ip = "192.168.123.115";  //ETH-RS232 converter in TCP_Server mode
-$moxa_port = 20108;
+
+$device = '/dev/hidraw0';
+
+///dev/hidraw0';
+// $moxa_ip = "192.168.123.115";  //ETH-RS232 converter in TCP_Server mode
+// $moxa_port = 20108;
 $moxa_timeout = 10;
 $warte_bis_naechster_durchlauf = 4; //Zeit zw. zwei Abfragen in Sekunden
 $tmp_dir = "/tmp/inv1/";             //Speicherort/-ordner fuer akt. Werte -> am Ende ein / !!!
@@ -15,11 +20,11 @@ $schleifenzaehler = 0;
 
 //Logging/Debugging Einstellungen:
 $debug = true;         //Debugausgaben und Debuglogfile
-$debug2 = false;         //erweiterte Debugausgaben nur auf CLI
-$log2console = 0;
+$debug2 = true;         //erweiterte Debugausgaben nur auf CLI
+$log2console = 1;
 $fp_log = 1;
 $script_name = "infinipoll10k.php";
-$logfilename = "/home/pi/infinipoll_10k_";     //Debugging Logfile
+$logfilename = "/home/ahmed/infinipoll_10k_";     //Debugging Logfile
 
 //Initialisieren der Variablen:
 $is_error_write = false;
@@ -37,36 +42,29 @@ if($debug) logging("INFINIPOLL 10K Neustart");
 
 // Get model,version and protocolID for infini_startup.php
 // Modell  abfragen
-$fp = @fsockopen($moxa_ip, $moxa_port, $errno, $errstr, $moxa_timeout); // Open connection to the inverter
+$fp = fopen($device, 'rwb+');
+// $fp = @fsockopen($moxa_ip, $moxa_port, $errno, $errstr, $moxa_timeout); // Open connection to the inverter
 // ProtokollID abfragen
-fwrite($fp, "^P003PI".chr(0x0d)); //QPI Protocol ID abfragen 6byte
-$byte=fgets($fp,10);
-$protid = substr($byte,5,2);
+$protid = send_and_get_response($fp, "^P003PI"); //QPI Protocol ID abfragen 6byte
 if($debug2) echo "ProtocolID: ".$protid."\n";
 // Serial abfragen
-fwrite($fp, "^P003ID".chr(0x0d)); //QPI Protocol ID abfragen 6byte
-$byte=fgets($fp,32);
-$serial = substr($byte,8,14);
+$serial = send_and_get_response($fp, "^P003ID"); //QPI Protocol ID abfragen 6byte
 if($debug2) echo "Serial: ".$serial."\n";
 // CPU Version abfragen
-fwrite($fp, "^P004VFW".chr(0x0d));
-$byte=fgets($fp,22);
-$version = substr($byte,5,14);
+$version = send_and_get_response($fp, "^P004VFW");
 if($debug2) echo "CPU Version: ".$version."\n";
 // CPU secondary Version abfragen
-fwrite($fp, "^P005VFW2".chr(0x0d));
-$byte=fgets($fp,24);
-$version2 = substr($byte,6,15);
+$version2 = send_and_get_response($fp, "^P005VFW2");
 if($debug2) echo "CPU secondary Version: ".$version2."\n";
 // Modell  abfragen
-fwrite($fp, "^P003MD".chr(0x0d));
-$byte=fgets($fp,42);
-$modelcode = substr($byte,6,3);
+$byte=send_and_get_response($fp, "^P003MD");
+$array = explode(",", $byte);
+$modelcode = $array[0];
 if($modelcode="000") $model="MPI Hybrid 10KW/3P";
-$modelva = substr($byte,10,6);
-$modelpf = substr($byte,17,2);
-$modelbattpcs = substr($byte,34,2);
-$modelbattv = substr($byte,37,2);
+$modelva = $array[1];
+$modelpf = $array[2];
+$modelbattpcs = $array[3];
+$modelbattv = $array[4];
 if($debug2)
 {
 	echo "Modell: ".$model."\n";
@@ -82,9 +80,7 @@ write2file_string($tmp_dir."INFO.txt",$CMD_INFO);
 
 //get date+time and set current time from server
 //  P002T<cr>: Query current time
-fwrite($fp, "^P002T".chr(0x0d));
-$byte=fgets($fp,24);
-$zeit = substr($byte,7,14);
+$zeit = send_and_get_response($fp, "^P002T");
 if($debug) echo "\nAktuelle Zeit im WR: ".$zeit."\n";
 if($debug) logging("aktuelle Zeit im WR: ".$zeit);
 
@@ -95,18 +91,14 @@ if($daybase==0)
     if($debug) logging("Tageszähler war 0 - wird neu vom WR geholt");
     //Get total-counter
 	// ^P003ET<cr>: Query total generated energy
-	fwrite($fp, "^P003ET".chr(0x0d));
-	$byte=fgets($fp,16);
-	$totalcounter = substr($byte,6,8);
+	$totalcounter = send_and_get_response($fp, "^P003ET");
 	if($debug) echo "KwH_Total: ".$totalcounter." kWh\n";
 	// ^P014EDyyyymmddnnn<cr>: Query generated energy of day
 	$month=date("m");
 	$year=date("Y");
 	$day=date("d");
 	$check = cal_crc_half("^P014ED".$year.$month.$day);
-	fwrite($fp, "^P014ED".$year.$month.$day.$check.chr(0x0d));
-	$byte=fgets($fp,14);
-	$daypower = substr($byte,7,6);
+	$daypower = send_and_get_response($fp, "^P014ED".$year.$month.$day.$check);
 	if($debug) echo "WH_Today: ".$daypower." Wh\n";
 	$daytemp = $daypower/1000 - ((int)($daypower/1000));
 	$pv_ges = ($totalcounter*1000)+($daytemp*1000); // in KWh
@@ -130,7 +122,8 @@ while(true)
 	$err = false;
 
 	//Aufbau der Verbindung zum Serial2ETH Wandler
-	$fp = @fsockopen($moxa_ip, $moxa_port, $errno, $errstr, $moxa_timeout);
+	$fp = @fopen($device, 'rwb+');
+// 	$fp = @fsockopen($moxa_ip, $moxa_port, $errno, $errstr, $moxa_timeout);
 	if (!$fp)
 	{
 		logging("Fehler beim Verbindungsaufbau: $errstr ($errno)");
@@ -154,9 +147,8 @@ while(true)
 	}
 	//Abfrage des InverterModus
 	// ^P004MOD<cr>: Query working mode
-	fwrite($fp, "^P004MOD".chr(0x0d));
-	$byte=fgets($fp,11);
-	$modus = substr($byte,5,2);
+	$modus = send_and_get_response($fp, "^P004MOD");
+	echo $modus;
 	switch ($modus) 
 	{
 		case "00":
@@ -182,7 +174,7 @@ while(true)
 		break;
 		default:
 		$modusT="unknown";
-		continue;
+		break;
 	}
 	if($modus=="00" || $modus=="01" || $modus=="02")
 	{
@@ -205,33 +197,33 @@ while(true)
 
         //HAUPTABFRAGE send Request for Records, see "Infini-Solar 10KW protocol 20150702.xlsx"
 	// ^P003GS<cr>: Query general status
-	fwrite($fp, "^P003GS".chr(0x0d));
-	$byte=fgets($fp,115);
-	$pv1volt = (substr($byte,5,4)/10);
-	$pv2volt = (substr($byte,10,4)/10);
-	$pv1amps = (substr($byte,15,4)/100);
-	$pv2amps = (substr($byte,20,4)/100);
-	$battvolt = (substr($byte,25,4)/10);
-//	$battvolt = (substr($byte,25,5)); //MARIO
-	$battcap = substr($byte,30,3);
-	$battamps = (substr($byte,34,6)/10);
-	$gridvolt1 = (substr($byte,41,4)/10);
-	$gridvolt2 = (substr($byte,46,4)/10);
-	$gridvolt3 = (substr($byte,51,4)/10);
-	$gridfreq = (substr($byte,56,4)/100);
-	$gridamps1 = (substr($byte,61,4)/10);
-	$gridamps2 = (substr($byte,66,4)/10);
-	$gridamps3 = (substr($byte,71,4)/10);
-	$outvolt1 = (substr($byte,76,4)/10);
-	$outvolt2 = (substr($byte,81,4)/10);
-	$outvolt3 = (substr($byte,86,4)/10);
-	$outfreq = (substr($byte,91,4)/100);
+	$byte = send_and_get_response($fp, "^P003GS");
+	echo $byte;
+	$array = array_map("floatval", explode(',',$byte));
+	$pv1volt = ($array[0])/10;
+	$pv2volt = ($array[1])/10;
+	$pv1amps = ($array[2])/100;
+	$pv2amps = ($array[3])/100;
+	$battvolt = ($array[4])/10;
+	$battcap = ($array[5]);
+	$battamps = ($array[7])/10;
+	$gridvolt1 = ($array[7])/10;
+	$gridvolt2 = ($array[8])/10;
+	$gridvolt3 = ($array[9])/10;
+	$gridfreq = ($array[10])/100;
+	$gridamps1 = ($array[11])/10;
+	$gridamps2 = ($array[12])/10;
+	$gridamps3 = ($array[13])/10;
+	$outvolt1 = ($array[14])/10;
+	$outvolt2 = ($array[15])/10;
+	$outvolt3 = ($array[16])/10;
+	$outfreq = ($array[17])/100;
 	//$outamps1 = (substr($byte,96,4)/10);
 	//$outamps2 = (substr($byte,101,4)/10);
 	//$outamps3 = (substr($byte,106,4)/10);
-	$intemp = substr($byte,99,3);
-	$maxtemp = substr($byte,103,3);
-	$batttemp = substr($byte,107,3);
+	$intemp = ($array[21]);
+	$maxtemp = ($array[22]);
+	$batttemp = ($array[13]);
 	if($debug2)
 	{
 		echo "SolarInput1: ".$pv1volt."V\n";
@@ -260,45 +252,45 @@ while(true)
 		echo "BattTemp: ".$batttemp."°\n";
 	}
 	// ^P003PS<cr>: Query power status
-	fwrite($fp, "^P003PS".chr(0x0d));
-	$byte=fgets($fp,83);
-	$pv1power = substr($byte,7,4);
-	$pv2power = substr($byte,13,4);
-	$gridpower1 = substr($byte,25,4);
-	$gridpower2 = substr($byte,30,4);
-	$gridpower3 = substr($byte,35,4);
-	$gridpower = substr($byte,40,5);
-	$apppower1 = substr($byte,46,4);
-	$apppower2 = substr($byte,51,4);
-	$apppower3 = substr($byte,56,4);
-	$apppower = substr($byte,61,5);
-	$powerperc = substr($byte,65,3);
-	$acoutact = substr($byte,69,1);
-	if($acoutact=="0") $acoutactT="disconnected";
-	if($acoutact=="1") $acoutactT="connected";
-	$pvinput1status = substr($byte,71,1);
-	$pvinput2status = substr($byte,73,1);
-	$battcode_code = substr($byte,75,1);
-  	if($battcode_code=="0") $battstat="donothing";
-	if($battcode_code=="1") $battstat="charge";
-	if($battcode_code=="2") $battstat="discharge";
+	$byte=send_and_get_response($fp, "^P003PS");
+	$array = array_map("floatval", explode(',', $byte));
+	echo $array;
+	$pv1power = $array[0];
+	$pv2power = $array[1];
+	// these elements are absent
+	$gridpower1 = $array[7];
+	$gridpower2 = $array[8];
+	$gridpower3 = $array[9];
+	$gridpower = $array[10];
+	$apppower1 = $array[11];
+	$apppower2 = $array[12];
+	$apppower3 = $array[13];
+	$apppower = $array[14];
+	$powerperc = $array[15];
+	$acoutact = $array[16];
+	if($acoutact== 0) $acoutactT="disconnected";
+	if($acoutact== 1) $acoutactT="connected";
+	$pvinput1status = $array[13];//substr($byte,71,1);
+	$pvinput2status = $array[14];//substr($byte,73,1);
+	$battcode_code = $array[15];//substr($byte,75,1);
+  	if($battcode_code==0) $battstat="donothing";
+	if($battcode_code==1) $battstat="charge";
+	if($battcode_code==2) $battstat="discharge";
 	$dcaccode_code = substr($byte,77,1);
-	if($dcaccode_code=="0") $dcaccode="donothing";
-	if($dcaccode_code=="1") $dcaccode="AC-DC";
-	if($dcaccode_code=="2") $dcaccode="DC-AC";
+	if($dcaccode_code==0) $dcaccode="donothing";
+	if($dcaccode_code==1) $dcaccode="AC-DC";
+	if($dcaccode_code==2) $dcaccode="DC-AC";
 	$powerdir_code = substr($byte,79,1);
-	if($powerdir_code=="0") $powerdir="donothing";
-	if($powerdir_code=="1") $powerdir="input";
-	if($powerdir_code=="2") $powerdir="output";
+	if($powerdir_code==0) $powerdir="donothing";
+	if($powerdir_code==1) $powerdir="input";
+	if($powerdir_code==2) $powerdir="output";
 
 	// ^P014EDyyyymmddnnn<cr>: Query generated energy of day
 	$month=date("m");
 	$year=date("Y");
 	$day=date("d");
 	$check = cal_crc_half("^P014ED".$year.$month.$day);
-	fwrite($fp, "^P014ED".$year.$month.$day.$check.chr(0x0d));
-	$byte=fgets($fp,14);
-	$daypower = substr($byte,7,5);
+	$daypower = floatval(send_and_get_response($fp, "^P014ED".$year.$month.$day.$check));
 
 	if($debug2)
 	{
@@ -471,7 +463,7 @@ function logging($txt, $write2syslog=false)
 		$dt = new DateTime(date("Y-m-d H:i:s.",$ts));
 		echo $dt->format("Y-m-d H:i:s.u");
 		$logdate = $dt->format("Y-m-d H:i:s.u");
-		echo date("Y-m-d H:i:s").": $txt\n";
+		echo date("Y-m-d H:i:s").": $txtread_bytes_usb\n";
 		fwrite($fp_log, date("Y-m-d H:i:s").": $txt<br />\n");
 //                fwrite($fp_log, $logdate.": $txt<br />\n");
 //                if($write2syslog) syslog(LOG_ALERT,$txt);
@@ -481,20 +473,24 @@ function batterie_nacht()
 {
 	// Nachts NUR die Werte der Batterie abfragen
 	global $debug, $err, $fp, $tmp_dir, $warte_bis_naechster_durchlauf;
-	fwrite($fp, "^P003GS".chr(0x0d));
-	$byte=fgets($fp,115);
+	$byte=send_and_get_response($fp, "^P003GS");
+
 	// Batteriedaten auswerten + pruefen
-	$battvolt = (substr($byte,27,4)/10);
-	$battcap = substr($byte,32,3);
-	$battamps = substr($byte,36,6);
-	$batttemp = substr($byte,109,3);
+	$array = array_map("floatval",explode(",", $byte));
+	$battvolt = ($array[4])/10;
+	// $battvolt = (substr($byte,27,4)/10);
+	$battcap = ($array[5]);
+	// $battcap = substr($byte,32,3);
+	$battamps = ($array[6]);
+	// $battamps = substr($byte,36,6);
+	$batttemp = ($array[count($array) - 1]);
 	// Power State abfragen
-	fwrite($fp, "^P003PS".chr(0x0d));
-	$byte=fgets($fp,83);
-	$battcode_code = substr($byte,77,1);
-	if($battcode_code=="0") $battcode="tue nichts";
-	if($battcode_code=="1") $battcode="laden";
-	if($battcode_code=="2") $battcode="entladen";
+	$byte=send_and_get_response($fp, "^P003PS");
+	$byte = array_map("floatval", explode(",", $byte));
+	$battcode_code = $array[15];//substr($byte,75,1);
+  	if($battcode_code==0) $battstat="donothing";
+	if($battcode_code==1) $battstat="charge";
+	if($battcode_code==2) $battstat="discharge";
 
 	// Werte in die Files schreiben
 	write2file($tmp_dir."BATTV.txt",$battvolt);
@@ -511,63 +507,160 @@ function batterie_nacht()
 
 function getalarms()
 {
-	global $debug, $debug2, $tmp_dir;
-	$moxa_ip = "192.168.123.115";
-	$moxa_port = 20108;
+	global $debug, $debug2, $tmp_dir, $device;
+// 	$moxa_ip = "192.168.123.115";
+// 	$moxa_port = 20108;
 	$moxa_timeout = 10;
-	$fp = @fsockopen($moxa_ip, $moxa_port, $errno, $errstr, $moxa_timeout);
+	$fp = @fopen($device, 'rbw+');
+// 	$fp = @fsockopen($moxa_ip, $moxa_port, $errno, $errstr, $moxa_timeout);
 	// Read fault register
 	// Command: ^P003WS<cr>: Query warning status
 	//                                1 1 1 1 1 1 1 1 1 1 2 2
 	//            0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
 	//Answer:^D040A,B,C,D,E,F,G,H,I,J,K,L,M,N,O,P,Q,R,S,T,U,V<CRC><cr>
-	fwrite($fp, "^P003WS".chr(0x0d)); //Device Warning Status inquiry
-	$byte=fgets($fp,51);
-	$warnings = substr($byte,5,44);
+	$warnings = send_and_get_response($fp, "^P003WS"); //Device Warning Status inquiry
 	//echo "Warnings:".$warnings."\n";
-	for($i = 0; $i < 43; $i=$i+2)
-	{
-        $fehlerbit = substr($warnings,$i,1);
-		if($debug) echo "fehlerbit ".$i." ist ".$fehlerbit."\n";
-        if($fehlerbit != "0" && $fehlerbit != "1" && $fehlerbit != "-") echo "Fehler beim Emfang: Bit ".$i." = ".$fehlerbit."\n";
-        //Bituebersetzungstabelle:
-        if($i==0 && $fehlerbit=="1") $error[$i] = "Solar input 1 loss\n";
-        if($i==2 && $fehlerbit=="1") $error[$i] = "Solar input 2 loss\n";
-        if($i==4 && $fehlerbit=="1") $error[$i] = "Solar input 1 voltage too higher\n";
-        if($i==6 && $fehlerbit=="1") $error[$i] = "Solar input 2 voltage too higher\n";
-        if($i==8 && $fehlerbit=="1") $error[$i] = "Battery under\n";
-        if($i==10 && $fehlerbit=="1") $error[$i] = "Battery low\n";
-        if($i==12 && $fehlerbit=="1") $error[$i] = "Battery open\n";
-        if($i==14 && $fehlerbit=="1") $error[$i] = "Battery voltage too higher\n";
-        if($i==16 && $fehlerbit=="1") $error[$i] = "Battery low in hybrid mode\n";
-        if($i==18 && $fehlerbit=="1") $error[$i] = "Grid voltage high loss\n";
-        if($i==20 && $fehlerbit=="1") $error[$i] = "Grid voltage low loss\n";
-        if($i==22 && $fehlerbit=="1") $error[$i] = "Grid frequency high loss\n";
-        if($i==24 && $fehlerbit=="1") $error[$i] = "Grid frequency low loss\n";
-        if($i==26 && $fehlerbit=="1") $error[$i] = "AC input long-time average voltage over\n";
-        if($i==28 && $fehlerbit=="1") $error[$i] = "AC input voltage loss\n";
-        if($i==30 && $fehlerbit=="1") $error[$i] = "AC input frequency loss\n";
-        if($i==32 && $fehlerbit=="1") $error[$i] = "AC input island\n";
-        if($i==34 && $fehlerbit=="1") $error[$i] = "AC input phase dislocation\n";
-        if($i==36 && $fehlerbit=="1") $error[$i] = "Over temperature\n";
-        if($i==38 && $fehlerbit=="1") $error[$i] = "Over load\n";
-        if($i==40 && $fehlerbit=="1") $error[$i] = "EPO active\n";
-        if($i==42 && $fehlerbit=="1") $error[$i] = "AC input wave loss\n";
+	$warning_list = array(
+		"Solar input 1 loss",
+		"Solar input 2 loss",
+		"Solar input 1 voltage too higher",
+		"Solar input 2 voltage too higher",
+		"Battery under",
+		"Battery low",
+		"Battery open",
+		"Battery voltage too high",
+		"Battery low in hybrid mode",
+		"Grid voltage high loss",
+		"Grid voltage low loss",
+		"Grid frequency high loss",
+		"Grid frequency low loss",
+		"AC input long-time average voltage over",
+		"AC input voltage loss",
+		"AC input frequency loss",
+		"AC input island",
+		"AC input phase dislocation",
+		"Over temperature",
+		"Over load",
+		"EPO Active",
+		"AC input wave loss",
+	);
+	$warnings = explode(",", $warnings);
+	for ($i = 0; $i < count($warnings); ++$i) {
+		$bit = $warnings[$i];
+		if($debug) echo "Bit ".$i." is ".$bit."\n";
+		if ($bit) {
+			$error[$i] = $warning_list[$i];
+		}
 	}
-	if ($debug) for($i = 0; $i < 22; $i++){
+
+	if ($debug)  {
+		for($i = 0; $i < count($warnings); $i++) {
 			if(isset($error[$i])) echo "Fehler:".$error[$i];
-			}
+		}
+	}
+	
 	$fp = fopen($tmp_dir.'ALARM.txt',"w");
 	if($fp)
 	{
-		for($i = 1; $i < 22; $i++)
+		for($i = 0; $i < 22; $i++)
 		{
 			if(isset($error[$i]))
 			{
-				fwrite($fp, $error[$i]);
+				fwrite($fp, $error[$i]."\n");
 			}
 		}
 	}
 	fclose($fp);
 }
+
+function send_and_get_response($handle, $data) {
+	write_bytes_usb($handle, $data);
+	$resp = read_bytes_usb($handle);
+	if ($resp == "") {
+		logging("Invalid request: $data \n");
+	}
+	return $resp;
+}
+
+
+
+function write_bytes_usb($handle, $bytes) {
+	$current_payload = "";
+	echo "Request: $bytes\n";
+	while(strlen($bytes) >= 8) {
+		$current_payload = substr($bytes, 0, 8);
+		fwrite($handle, $current_payload);
+		fflush($handle);
+		$bytes = substr($bytes, 8);
+	}
+	$bytes = $bytes.chr(0x0d);
+	if (strlen($bytes) == 1) {
+		$bytes = $bytes.substr($current_payload, strlen($bytes), 8);
+	}
+	fwrite($handle, $bytes);
+	fflush($handle);
+}
+
+function read_byte_by_byte_from_usb($handle) {
+	$result = "";
+	$temp = "";
+	do {
+		// echo "read_byte_by_byte_from_usb loop\n";
+		$temp = fgetc($handle);
+		$result = $result.$temp;
+		if (strpos($temp, "\r") !== FALSE){
+			break;
+		}
+		if (strlen($result)==8) {
+			break;
+		}
+
+	} while (TRUE);
+	// echo "read_byte_by_byte_from_usb  result: ".bin2hex($result);
+	return $result;
+}
+
+
+function read_bytes_usb($handle) {
+	$result = "";
+	$temp = "";
+	do {
+		$temp = read_byte_by_byte_from_usb($handle);
+		$result = $result.$temp;
+		// echo bin2hex($temp)."\n";
+		if (strpos($temp, "\r") !== FALSE){
+			break;
+		}
+
+	} while (TRUE);
+	$result = substr($result, 0, strpos($result, "\r"));
+	// echo "Response before validation: $result\n";
+	if (is_valid_response($result)) {
+		$result = strip_protocol_from_response($result);
+		echo "Returning combined result: ".$result."\n";
+		return $result;
+	} else {
+		return "";
+	}
+}
+
+function is_valid_response($response) {
+	if (strpos($response, "^0") === 0) {
+		return false;
+	} else if(strpos($response, "NAK(") !== FALSE) {
+		return false;
+	}
+	return true;
+}
+
+function strip_protocol_from_response($response) {
+	// echo "strip_protocol_from_response   input: ".$response."\n";
+	//^DXXX
+	$temp = substr($response, 5);
+	// echo "$temp\n";
+	return substr($temp, 0, strlen($temp) - 2);
+}
+
+
 ?>
+
